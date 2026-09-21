@@ -242,7 +242,8 @@ powershell -ExecutionPolicy Bypass -File share_internet_windows.ps1
 ```
 
 > **The macOS and Linux scripts do NOT hand out addresses** (no DHCP). They only work once
-> the CM4 has the matching static IP from Part 4.1. Use the GUI method first.
+> the CM4 has the matching static IP from Part 4.1. Use the GUI method first, or set the
+> static IP at the CM4's console (Part 4.1, Method A).
 > On Windows, ICS always uses `192.168.137.1` for the laptop, so the script and the GUI behave the same.
 
 > **Sharing is cleared when your laptop reboots.** Turn it on again each session.
@@ -297,7 +298,19 @@ extension in VS Code and connect to `ubuntu@<CM4_IP>`:
 
 ### 3.6 Get the lab scripts onto the CM4
 
-On the **CM4**, now that it has internet:
+Several later steps run a script **on the CM4**. The scripts are published on this site, so
+they start out on the internet and not on the CM4. Use whichever of these three ways fits
+your situation:
+
+| Way | Needs | Best when |
+|---|---|---|
+| **A. Download on the CM4** (`curl`) | CM4 has internet | You can SSH in and `ping 8.8.8.8` works on the CM4 |
+| **B. Copy from your laptop** (`scp`) | SSH from laptop to CM4 | You can SSH in, but the CM4 has no internet |
+| **C. Copy via the SD card** | Nothing: no network at all | You can't SSH in yet (e.g. the CM4 isn't in your laptop's range) |
+
+#### A. Download directly on the CM4
+
+In an SSH session or at the CM4's console:
 
 ```bash
 mkdir -p ~/lab01 && cd ~/lab01
@@ -307,63 +320,117 @@ done
 ls
 ```
 
-If the CM4 has no internet yet, download the files from this page and copy them over from your laptop:
+#### B. Copy from your laptop with `scp`
 
-```bash
-scp setup_network.sh setup_swap.sh check_system.sh led_blink.py button_led.py ubuntu@<CM4_IP>:~/lab01/
-```
+1. On your **laptop**, click the ⬇️ links on this page to download the scripts. They land in
+   your `Downloads` folder: [setup_network.sh](code/setup_network.sh),
+   [setup_swap.sh](code/setup_swap.sh), [check_system.sh](code/check_system.sh),
+   [led_blink.py](code/led_blink.py), [button_led.py](code/button_led.py).
+   If the browser opens the file as text instead, right-click the link → **Save link as…**
+2. Open a terminal on the **laptop**. On Windows use PowerShell. Go to the Downloads folder:
+
+   ```bash
+   cd ~/Downloads             # Windows PowerShell: cd $HOME\Downloads
+   ```
+
+3. Create the folder on the CM4, then copy the files into it. Replace `<CM4_IP>` with its address:
+
+   ```bash
+   ssh ubuntu@<CM4_IP> "mkdir -p ~/lab01"
+   scp setup_network.sh setup_swap.sh check_system.sh led_blink.py button_led.py ubuntu@<CM4_IP>:~/lab01/
+   ```
+
+4. Check on the CM4: `ls ~/lab01`
+
+#### C. Copy through the SD card (no network needed)
+
+The SD card's first partition, **`system-boot`**, is a normal FAT drive that Windows, macOS and
+Linux can all read and write. Anything you copy there shows up on the CM4 under `/boot/firmware/`.
+
+1. On the CM4 run `sudo poweroff`, wait until the activity LED stops, unplug the 12 V supply, and take out the SD card.
+2. Put the SD card in your laptop. A drive called **`system-boot`** appears.
+   > **Windows may also say *"You need to format the disk in drive X: before you can use it"*.**
+   > That is the Linux partition, which Windows can't read. Click **Cancel**. Formatting
+   > it would erase Ubuntu.
+3. Drag the downloaded scripts onto the `system-boot` drive, then **eject** it properly before removing the card.
+4. Put the card back in the IO board and power on. At the CM4 console, or over SSH:
+
+   ```bash
+   mkdir -p ~/lab01
+   cp /boot/firmware/*.sh /boot/firmware/*.py ~/lab01/
+   ls ~/lab01
+   ```
 
 ---
 
 ## Part 4 — Networking
 
 Ubuntu Server doesn't use `/etc/dhcpcd.conf` (a Raspberry Pi OS file). Networking is set by
-**netplan** YAML files in `/etc/netplan/`. The script below writes that file for you.
+**netplan** YAML files in `/etc/netplan/`.
 
-### 4.1 Static IP on eth0
+### 4.1 Static IP on eth0, in your laptop's shared range
 
-A fixed Ethernet address means you always SSH to the same IP over the cable.
-**Use the row that matches how your laptop shares internet:**
+When your laptop shares its internet over Ethernet, the cable becomes a small network with
+the **laptop as the gateway**. The CM4 must have an address on that same network, meaning the
+same first three numbers, and must use the laptop's address as its gateway. A fixed
+(static) address also means you always SSH to the same IP.
 
-| Laptop sharing method | `ETH_ADDRESS` | `ETH_GATEWAY` |
+#### Step 1 — Find your laptop's address on the Ethernet link
+
+Turn internet sharing on (Part 3.1) with the cable plugged in, then on the **laptop**:
+
+| Laptop | Command | Look for |
 |---|---|---|
-| **Windows** ICS (GUI or script) | `192.168.137.12/24` | `192.168.137.1` |
-| **macOS** Internet Sharing (GUI) | `192.168.2.12/24` | `192.168.2.1` |
-| **Linux** NetworkManager "Shared" (GUI) | `10.42.0.12/24` | `10.42.0.1` |
-| **macOS / Linux** script | `192.168.0.12/24` | `192.168.0.1` |
+| **Windows** | `ipconfig` (PowerShell) | the *Ethernet adapter* section → **IPv4 Address**, e.g. `192.168.137.1` |
+| **macOS** | `ifconfig bridge100 \| grep "inet "` (GUI sharing) or `ifconfig en5 \| grep "inet "` (script) | `inet 192.168.2.1` |
+| **Linux** | `ip -br addr` | your Ethernet interface (`enp…`/`eth…`), e.g. `10.42.0.1/24` |
 
-⬇️ [setup_network.sh](code/setup_network.sh)
+**The rule:** keep the first three numbers, change the last one to `12`.
 
-On the CM4:
+| If the laptop is… | then the CM4 gets `ETH_ADDRESS` | and `ETH_GATEWAY` |
+|---|---|---|
+| `192.168.137.1` (Windows ICS) | `192.168.137.12/24` | `192.168.137.1` |
+| `192.168.2.1` (macOS Internet Sharing) | `192.168.2.12/24` | `192.168.2.1` |
+| `10.42.0.1` (Linux "Shared to other computers") | `10.42.0.12/24` | `10.42.0.1` |
+| `192.168.0.1` (macOS / Linux script) | `192.168.0.12/24` | `192.168.0.1` |
+| anything else, e.g. `a.b.c.1` | `a.b.c.12/24` | `a.b.c.1` |
+
+Write your two values down. The examples below use the Windows row.
+
+#### Step 2 — Set it on the CM4: pick Method A or B
+
+| | Method A — at the CM4 console | Method B — the script over SSH |
+|---|---|---|
+| Needs | monitor + USB keyboard (Part 2.1) | an SSH session to the CM4 already working |
+| Use it when | you **can't** reach the CM4 over the network yet | you **can** already SSH in (over Wi-Fi, or because GUI sharing gave the CM4 an address) |
+
+---
+
+#### Method A — Write the netplan file by hand (monitor + keyboard)
+
+This needs no network and no script: you type the config directly on the CM4.
+
+**1.** Log in at the console (see Part 2.1) and look at the existing network files:
 
 ```bash
-cd ~/lab01
-nano setup_network.sh          # edit ETH_ADDRESS / ETH_GATEWAY in the SETTINGS block
-sudo bash setup_network.sh
+ls /etc/netplan/
+# usually: 50-cloud-init.yaml   (written on first boot from your Imager settings)
 ```
 
-The script:
-- backs up the current netplan files and writes one file, `/etc/netplan/01-cm4-network.yaml`
-- keeps the Wi-Fi network you set in Imager (`WIFI_MODE="keep"`)
-- validates the file with `netplan generate` before applying it, and restores the backup if it fails
-- stops cloud-init from rewriting the network config on later boots
-
-If you were connected over the cable, your SSH session drops. Reconnect to the new address:
+**2.** Create a new file. Its name starts with `99-` so it is read *last* and overrides the
+eth0 settings in `50-cloud-init.yaml`. Your Wi-Fi settings in that file are left alone.
 
 ```bash
-ssh ubuntu@192.168.137.12      # the ETH_ADDRESS you chose
-ping -c3 8.8.8.8               # on the CM4: internet works?
+sudo nano /etc/netplan/99-eth0-static.yaml
 ```
 
-Here is the file it writes, for reference (Windows row):
+**3.** Type this in, using **your** values from Step 1:
 
 ```yaml
 network:
   version: 2
-  renderer: networkd
   ethernets:
     eth0:
-      optional: true            # don't stall boot for 2 min when the cable is out
       dhcp4: false
       addresses: [192.168.137.12/24]
       routes:
@@ -371,9 +438,96 @@ network:
           via: 192.168.137.1
       nameservers:
         addresses: [8.8.8.8, 1.1.1.1]
+      optional: true
 ```
 
-> **Plugging eth0 into a router instead of your laptop?** Set `ETH_MODE="dhcp"` and re-run
+> **YAML is strict about indentation.** Use **spaces, never Tab**, exactly 2 per level as
+> shown. `addresses` and `routes` line up under `dhcp4`, and `- to:` is indented under `routes:`.
+
+Save with `Ctrl+O`, `Enter`, then exit with `Ctrl+X`.
+
+**4.** Lock down the file's permissions (netplan warns otherwise) and stop cloud-init from
+rewriting the network config on later boots:
+
+```bash
+sudo chmod 600 /etc/netplan/99-eth0-static.yaml
+echo "network: {config: disabled}" | sudo tee /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+```
+
+**5.** Check the file, then apply it:
+
+```bash
+sudo netplan generate          # no output = no mistakes. An error names the line to fix.
+sudo netplan apply
+```
+
+**6.** Test it:
+
+```bash
+ip -br addr show eth0          # -> eth0  UP  192.168.137.12/24
+ping -c3 192.168.137.1         # the laptop answers?
+ping -c3 8.8.8.8               # the internet answers?
+```
+
+**7.** From your **laptop**, you can now SSH in:
+
+```bash
+ssh ubuntu@192.168.137.12
+```
+
+**To undo Method A:** `sudo rm /etc/netplan/99-eth0-static.yaml && sudo netplan apply`
+
+---
+
+#### Method B — The `setup_network.sh` script (over SSH)
+
+The script writes the same kind of netplan file, plus a backup, validation and the hotspot option (Part 4.3).
+
+**1. Get the script onto the CM4** (details in [Part 3.6](#get-the-lab-scripts-onto-the-cm4)). The quickest way, run on your **laptop** from the folder you downloaded it to:
+
+```bash
+ssh ubuntu@<CURRENT_CM4_IP> "mkdir -p ~/lab01"
+scp setup_network.sh ubuntu@<CURRENT_CM4_IP>:~/lab01/
+```
+
+⬇️ [setup_network.sh](code/setup_network.sh)
+
+**2. SSH in and edit the SETTINGS block** with your values from Step 1:
+
+```bash
+ssh ubuntu@<CURRENT_CM4_IP>
+cd ~/lab01
+nano setup_network.sh
+```
+
+```bash
+ETH_MODE="static"
+ETH_ADDRESS="192.168.137.12/24"     # <- your value
+ETH_GATEWAY="192.168.137.1"         # <- your value
+```
+
+**3. Run it:**
+
+```bash
+sudo bash setup_network.sh
+```
+
+The script:
+- backs up the current netplan files and writes one file, `/etc/netplan/01-cm4-network.yaml`
+- keeps the Wi-Fi network you set in Imager (`WIFI_MODE="keep"`)
+- checks the new file with `netplan generate` before applying it, and restores the backup if the check fails
+- stops cloud-init from rewriting the network config on later boots
+
+**4. Reconnect.** If you were connected over the cable, the session drops when the address
+changes. That is expected. From the laptop:
+
+```bash
+ssh ubuntu@192.168.137.12      # the ETH_ADDRESS you chose
+ping -c3 8.8.8.8               # on the CM4: internet works?
+```
+
+> **Plugging eth0 into a router instead of your laptop?** With Method A, delete
+> `99-eth0-static.yaml` and run `sudo netplan apply`. With Method B, set `ETH_MODE="dhcp"` and re-run
 > the script. A static `192.168.137.12` has no route on a normal router network.
 
 Other options: `sudo bash setup_network.sh --show` prints the current config, and
@@ -676,6 +830,8 @@ RViz and GUI tools that a headless CM4 can't use. Visualise from your laptop ins
 | Hostname goes back to `ubuntu` after a reboot | Add `preserve_hostname: true` (Part 2.1, step 6) |
 | `ssh: Could not resolve hostname cm4-01.local` | Install `avahi-daemon` (Part 4.2) or use the IP address |
 | Can't find the CM4's IP | Use the GUI sharing method (it runs DHCP), then `arp -a`; or plug in HDMI + keyboard and run `ip -br addr` |
+| Sharing works but the CM4 is in a different range from the laptop | Part 4.1: find the laptop's Ethernet address, then set the CM4's static IP (Method A needs only a monitor and keyboard) |
+| `netplan generate` error about indentation or `mapping values` | A Tab or a wrong number of spaces in the YAML. Retype the indentation with spaces (Part 4.1, Method A step 3) |
 | Lost SSH after `setup_network.sh` | Reconnect to `ETH_ADDRESS`. If that fails, put the SD card in your laptop, delete `/etc/netplan/01-cm4-network.yaml` on the `writable` partition and copy the backup from `/etc/netplan-backups/` |
 | Weak or no Wi-Fi | The CM4 uses its PCB antenna by default. If an external antenna is fitted, add `dtparam=ant2` to `/boot/firmware/config.txt` |
 | `Could not get lock /var/lib/dpkg/lock-frontend` | unattended-upgrades is running. Wait |
