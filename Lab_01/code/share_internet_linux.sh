@@ -17,8 +17,8 @@
 
 # ----------------------------- SETTINGS --------------------------------------
 # Leave WAN_IF / LAN_IF empty to auto-detect. Use --list to see the names.
-WAN_IF=""                    # interface WITH internet   (Wi-Fi, e.g. wlp3s0)
-LAN_IF=""                    # interface TO THE CM4       (Ethernet, e.g. enp0s31f6)
+WAN_IF="wlp129s0"                    # interface WITH internet   (Wi-Fi, e.g. wlp3s0)
+LAN_IF="enpp130s0"                    # interface TO THE CM4       (Ethernet, e.g. enp0s31f6)
 HOST_IP="192.168.0.1"        # this laptop's address on the CM4 link = the CM4's GATEWAY
 LAN_SUBNET="192.168.0.0/24"  # must match the CM4's static IP range
 SET_HOST_IP=1                # 1 = also assign HOST_IP to LAN_IF
