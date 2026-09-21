@@ -125,7 +125,7 @@ network then has the same name. Set a unique name at the CM4's own console.
 wait for the `cloud-init` lines to stop, then press **Enter** to get a login prompt:
 
 ```
-cm4-01 login: ubuntu
+ubuntu login: ubuntu
 Password:
 ```
 
