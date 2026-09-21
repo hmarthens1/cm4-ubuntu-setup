@@ -84,7 +84,7 @@ choose **Edit settings**. Newer Imager versions show these as steps in the wizar
 | General | Username / password | e.g. `ubuntu` / a password you will remember |
 | General | Wireless LAN | your Wi-Fi SSID + password + **Wireless LAN country** (e.g. `CA`) — skip if `W` = 0 |
 | General | Locale | your time zone and keyboard layout |
-| Services | Enable SSH | ✅ *Use password authentication* |
+| Services | Enable SSH | ✅ *Use password authentication* (skipped? see Part 3.3.1) |
 
 This guide uses hostname **`cm4-01`** and user **`ubuntu`** in its examples. Use your own
 values wherever you see them.
@@ -241,9 +241,9 @@ powershell -ExecutionPolicy Bypass -File share_internet_windows.ps1 -List
 powershell -ExecutionPolicy Bypass -File share_internet_windows.ps1
 ```
 
-> **The macOS and Linux scripts do NOT hand out addresses** (no DHCP). They only work once
-> the CM4 has the matching static IP from Part 4.1. Use the GUI method first, or set the
-> static IP at the CM4's console (Part 4.1, Method A).
+> **The macOS and Linux scripts do NOT hand out addresses** (no DHCP). The CM4 then has no
+> IPv4 address until you give it the matching static IP (Part 4.1). You can still reach it
+> over **IPv6 link-local** (Part 3.2.2) to do that, or set it at the CM4's console (Part 4.1, Method A).
 > On Windows, ICS always uses `192.168.137.1` for the laptop, so the script and the GUI behave the same.
 
 > **Sharing is cleared when your laptop reboots.** Turn it on again each session.
@@ -251,26 +251,151 @@ powershell -ExecutionPolicy Bypass -File share_internet_windows.ps1
 ### 3.2 Find the CM4's IP address
 
 Ubuntu Server doesn't advertise `cm4-01.local` until you install `avahi-daemon`
-(Part 4.2), so for the first login you need the IP address. Pick one way:
+(Part 4.2), so for the first login you need an address. Which method works depends on
+whether your laptop **hands out** addresses on the cable (DHCP):
 
-| Where the CM4 is | How to find it |
-|---|---|
-| Cable to a **Windows** laptop (ICS) | PowerShell: `arp -a` and look under the `192.168.137.1` interface |
-| Cable to a **macOS** laptop | Terminal: `arp -a \| grep 192.168.2` |
-| Cable to a **Linux** laptop (Shared) | `ip neigh show dev <ethernet-if>` or `cat /var/lib/NetworkManager/dnsmasq-*.leases` |
-| Same Wi-Fi / router | the router's "connected devices" page, looking for `cm4-01` |
-| Any of the above | `nmap -sn 192.168.137.0/24` (use your subnet) |
+| Laptop sharing | Does the CM4 get an IPv4 address? | Use |
+|---|---|---|
+| Windows ICS, macOS Internet Sharing, Linux "Shared to other computers" (GUI) | Yes, automatically | **3.2.1**, IPv4 |
+| `share_internet_*.sh` scripts, or a laptop port set to a manual IP | **No.** The CM4 sits waiting for an address that never comes | **3.2.2**, IPv6 link-local |
+| CM4 joined Wi-Fi (set in Imager) | Yes, from the router | router's "connected devices" page, looking for `cm4-01` |
+
+**How to recognise the CM4:** its hardware (MAC) address starts with a Raspberry Pi prefix:
+`d8:3a:dd`, `dc:a6:32`, `e4:5f:01`, `28:cd:c1`, `2c:cf:67` or `b8:27:eb`.
+Windows shows these with dashes, e.g. `d8-3a-dd-…`.
+
+#### 3.2.1 IPv4: when the laptop hands out addresses
+
+| Laptop | Command | Look for |
+|---|---|---|
+| **Windows** (ICS) | PowerShell: `arp -a` | under `Interface: 192.168.137.1`, a `192.168.137.x` entry with a Pi MAC |
+| **macOS** | Terminal: `arp -a \| grep 192.168.2` | a `192.168.2.x` entry with a Pi MAC |
+| **Linux** (Shared) | `ip neigh show dev <ethernet-if>` | a `10.42.0.x` entry with a Pi MAC |
+| any | `nmap -sn 192.168.137.0/24` (use your range) | a host with a Pi MAC |
+
+#### 3.2.2 IPv6 link-local: works even when the CM4 has no IPv4 at all
+
+Every Ethernet port gives itself an **IPv6 link-local address** (it starts with `fe80::`) as
+soon as a cable is plugged in. It doesn't need DHCP, a router or any setup. Ubuntu builds
+it from the MAC address, so it **never changes**. That makes it a reliable way into a
+CM4 that has no IPv4 address, or the wrong one.
+
+The trick is to ping **`ff02::1`**, the IPv6 "everyone on this cable" address, and see who replies.
+
+**1. Find the name of your laptop's Ethernet interface.** A link-local address only means
+something together with the interface it lives on.
+
+| Laptop | Command | Typical name |
+|---|---|---|
+| **Linux** | `ip -br link` | `enp130s0`, `eth0`, `enx…` (USB adapter) |
+| **macOS** | `networksetup -listallhardwareports` | `en5`, `en6`, `en7` (USB-C Ethernet adapter) |
+| **Windows** | PowerShell: `Get-NetAdapter` | use the **ifIndex** number of *Ethernet*, e.g. `12` |
+
+**2. Ping everyone on the cable, then list who answered.** Replace `enp130s0`, `en5` or `12` with yours:
+
+**Linux:**
+
+```bash
+ping -6 -c3 ff02::1%enp130s0
+ip -6 neigh show dev enp130s0
+```
+
+**macOS:**
+
+```bash
+ping6 -c3 ff02::1%en5
+ndp -an | grep en5
+```
+
+**Windows (PowerShell):**
+
+```powershell
+ping -6 -n 3 ff02::1%12
+Get-NetNeighbor -InterfaceIndex 12 -AddressFamily IPv6 | Where-Object LinkLayerAddress -ne "" | Format-Table IPAddress, LinkLayerAddress, State
+```
+
+**3. Pick out the CM4.** One of the replies is the laptop itself. The CM4's line shows a Pi MAC (the state at the end may say `REACHABLE`, `STALE` or `DELAY`; any of them is fine). Example from a Linux laptop:
+
+```
+$ ping -6 -c3 ff02::1%enp130s0
+64 bytes from fe80::6914:41ea:6e9:c4a0%enp130s0: icmp_seq=1 ttl=64 time=0.046 ms   <- the laptop
+64 bytes from fe80::da3a:ddff:fe45:dcb7%enp130s0: icmp_seq=1 ttl=64 time=0.540 ms  <- the CM4
+$ ip -6 neigh show dev enp130s0
+fe80::da3a:ddff:fe45:dcb7 lladdr d8:3a:dd:45:dc:b7 REACHABLE                       <- Pi MAC
+```
+
+**4. Use it: always add `%<interface>` at the end.**
+
+```bash
+ssh ubuntu@fe80::da3a:ddff:fe45:dcb7%enp130s0                  # Windows: ...%12
+scp setup_network.sh 'ubuntu@[fe80::da3a:ddff:fe45:dcb7%enp130s0]:~/lab01/'   # scp needs [ ] and quotes
+```
+
+Now use Part 4.1 to give the CM4 a proper IPv4 address in your laptop's range.
+
+> **Is SSH even running?** Check the port before you worry about passwords:
+> `nc -zv fe80::da3a:ddff:fe45:dcb7%enp130s0 22` (Linux/macOS) should report *succeeded* / *open*.
+> On Windows: `Test-NetConnection fe80::da3a:ddff:fe45:dcb7%12 -Port 22`.
+
+> **Nothing but the laptop answers?** Check the cable and the IO board's Ethernet LEDs, and
+> give the CM4 a few minutes after power-on. On Windows, the neighbour list sometimes stays
+> empty even when the CM4 is there. In that case, use the monitor and run `ip -br addr` on the CM4 (Part 2.1).
 
 ### 3.3 SSH in
 
 ```bash
-ssh ubuntu@<CM4_IP>          # e.g. ssh ubuntu@192.168.137.57
+ssh ubuntu@<CM4_IP>          # e.g. ssh ubuntu@192.168.137.57, or the fe80::…%<if> address
 ```
 
-Type `yes` to accept the host key the first time, then your password.
+Use the username you set in Imager. Type `yes` to accept the host key the first time, then your password.
 
 > **"REMOTE HOST IDENTIFICATION HAS CHANGED"** after re-flashing is expected: the new OS
 > has new keys. Clear the old one with `ssh-keygen -R <CM4_IP>` (and `ssh-keygen -R cm4-01.local`).
+
+#### 3.3.1 `Permission denied (publickey)`: turn on password login
+
+```
+$ ssh ubuntu@fe80::da3a:ddff:fe45:dcb7%enp130s0
+ubuntu@fe80::da3a:ddff:fe45:dcb7%enp130s0: Permission denied (publickey).
+```
+
+This means the CM4 **accepts only SSH keys, not passwords**, and it doesn't trust your laptop's key.
+Ubuntu's image switches password login off unless Imager's *Enable SSH → Use password
+authentication* setting was applied. Turn it on at the CM4's own console:
+
+**1.** Connect the monitor and keyboard and log in (Part 2.1). Confirm your username, since you need it for SSH:
+
+```bash
+whoami
+```
+
+**2.** See which file turns passwords off:
+
+```bash
+sudo grep -ri passwordauthentication /etc/ssh/sshd_config /etc/ssh/sshd_config.d/
+# typically: /etc/ssh/sshd_config.d/50-cloud-init.conf:PasswordAuthentication no
+```
+
+**3.** Override it. The SSH server uses the **first** value it reads, and it reads the files in
+`sshd_config.d/` in name order, so a file starting with `01-` wins over `50-cloud-init.conf`:
+
+```bash
+echo "PasswordAuthentication yes" | sudo tee /etc/ssh/sshd_config.d/01-password-auth.conf
+sudo systemctl restart ssh
+sudo sshd -T | grep -i passwordauthentication     # -> passwordauthentication yes
+```
+
+**4.** From the laptop, try again. It now asks for your password:
+
+```bash
+ssh <username>@<CM4_IP>
+```
+
+Next, set up SSH keys (Part 3.4). After that you can switch password login off again for
+security with `sudo rm /etc/ssh/sshd_config.d/01-password-auth.conf && sudo systemctl restart ssh`.
+
+> **Wrong username gives the same error.** If the account doesn't exist, SSH still says
+> `Permission denied (publickey)` when passwords are off. Check it with `whoami` at the console.
 
 ### 3.4 Log in without a password (SSH keys)
 
@@ -402,7 +527,7 @@ Write your two values down. The examples below use the Windows row.
 | | Method A — at the CM4 console | Method B — the script over SSH |
 |---|---|---|
 | Needs | monitor + USB keyboard (Part 2.1) | an SSH session to the CM4 already working |
-| Use it when | you **can't** reach the CM4 over the network yet | you **can** already SSH in (over Wi-Fi, or because GUI sharing gave the CM4 an address) |
+| Use it when | you **can't** reach the CM4 over the network yet | you **can** already SSH in: over Wi-Fi, via a GUI-sharing address, or over IPv6 link-local (Part 3.2.2) |
 
 ---
 
@@ -489,6 +614,9 @@ The script writes the same kind of netplan file, plus a backup, validation and t
 ssh ubuntu@<CURRENT_CM4_IP> "mkdir -p ~/lab01"
 scp setup_network.sh ubuntu@<CURRENT_CM4_IP>:~/lab01/
 ```
+
+With an IPv6 link-local address, `scp` needs brackets and quotes:
+`scp setup_network.sh 'ubuntu@[fe80::…%enp130s0]:~/lab01/'`
 
 ⬇️ [setup_network.sh](code/setup_network.sh)
 
@@ -829,7 +957,9 @@ RViz and GUI tools that a headless CM4 can't use. Visualise from your laptop ins
 | `sudo: unable to resolve host ...` | `/etc/hosts` still has the old name on the `127.0.1.1` line (Part 2.1, step 5) |
 | Hostname goes back to `ubuntu` after a reboot | Add `preserve_hostname: true` (Part 2.1, step 6) |
 | `ssh: Could not resolve hostname cm4-01.local` | Install `avahi-daemon` (Part 4.2) or use the IP address |
-| Can't find the CM4's IP | Use the GUI sharing method (it runs DHCP), then `arp -a`; or plug in HDMI + keyboard and run `ip -br addr` |
+| Can't find the CM4's IP | Ping `ff02::1%<your-ethernet-if>` and use the CM4's `fe80::` address (Part 3.2.2); or plug in HDMI + keyboard and run `ip -br addr` |
+| CM4 answers on IPv6 but has no `192.168.x.x` address | Your laptop doesn't hand out addresses (script or manual IP). SSH in over `fe80::…%<if>` and set the static IP (Part 4.1) |
+| `Permission denied (publickey)` | Password login is off on the CM4. Turn it on at the console (Part 3.3.1), or check the username |
 | Sharing works but the CM4 is in a different range from the laptop | Part 4.1: find the laptop's Ethernet address, then set the CM4's static IP (Method A needs only a monitor and keyboard) |
 | `netplan generate` error about indentation or `mapping values` | A Tab or a wrong number of spaces in the YAML. Retype the indentation with spaces (Part 4.1, Method A step 3) |
 | Lost SSH after `setup_network.sh` | Reconnect to `ETH_ADDRESS`. If that fails, put the SD card in your laptop, delete `/etc/netplan/01-cm4-network.yaml` on the `writable` partition and copy the backup from `/etc/netplan-backups/` |
