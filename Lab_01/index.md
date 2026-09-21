@@ -483,7 +483,7 @@ ssh ubuntu@192.168.137.12
 
 The script writes the same kind of netplan file, plus a backup, validation and the hotspot option (Part 4.3).
 
-**1. Get the script onto the CM4** (details in [Part 3.6](#get-the-lab-scripts-onto-the-cm4)). The quickest way, run on your **laptop** from the folder you downloaded it to:
+**1. Get the script onto the CM4** (details in [Part 3.6](#36-get-the-lab-scripts-onto-the-cm4)). The quickest way, run on your **laptop** from the folder you downloaded it to:
 
 ```bash
 ssh ubuntu@<CURRENT_CM4_IP> "mkdir -p ~/lab01"
