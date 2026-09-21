@@ -22,7 +22,7 @@ You will need:
 - An Ethernet cable
 - For Part 8: a breadboard, one LED, one 330 Ω resistor, one push-button and 4 female-to-male jumper wires
 
-Optional: an HDMI monitor and USB keyboard, for troubleshooting only.
+Optional: an HDMI monitor and USB keyboard, for setting the hostname at the console (Part 2.1) or for troubleshooting.
 
 ### Know your CM4
 
@@ -80,7 +80,7 @@ choose **Edit settings**. Newer Imager versions show these as steps in the wizar
 
 | Tab | Setting | Value |
 |---|---|---|
-| General | Hostname | a unique name, e.g. `cm4-01` |
+| General | Hostname | a unique name, e.g. `cm4-01` (missed it? see Part 2.1) |
 | General | Username / password | e.g. `ubuntu` / a password you will remember |
 | General | Wireless LAN | your Wi-Fi SSID + password + **Wireless LAN country** (e.g. `CA`) — skip if `W` = 0 |
 | General | Locale | your time zone and keyboard layout |
@@ -112,6 +112,80 @@ the right password. Wait, then try again.
 > HDMI into **HDMI0** and a USB keyboard into the IO board's USB ports. Ubuntu's
 > `/boot/firmware/config.txt` normally already contains `dtoverlay=dwc2,dr_mode=host`
 > under `[cm4]`, which turns those USB ports on. On the CM4 they are off by default.
+
+### 2.1 Set the hostname (monitor + keyboard)
+
+If you skipped the hostname in Imager, the CM4 boots as **`ubuntu`**, and every CM4 on the
+network then has the same name. Set a unique name at the CM4's own console.
+
+**1. Connect a monitor and keyboard.** With the power off, plug an HDMI monitor into
+**HDMI0** on the IO board and a USB keyboard into one of its USB ports. Then power on.
+
+**2. Log in at the text console.** Ubuntu Server has no desktop. After the boot messages,
+wait for the `cloud-init` lines to stop, then press **Enter** to get a login prompt:
+
+```
+cm4-01 login: ubuntu
+Password:
+```
+
+- **If you set a user in Imager**, log in with that username and password.
+- **If you skipped customisation entirely**, the default login is `ubuntu` / `ubuntu`. Ubuntu
+  then makes you change it right away: type the current password (`ubuntu`) once, then your
+  new password twice.
+
+> The password doesn't show while you type, not even as `*`. That is normal.
+
+**3. Check the current name:**
+
+```bash
+hostnamectl
+```
+
+**4. Set the new name.** Use lowercase letters, digits and `-` only, e.g. `cm4-01`:
+
+```bash
+sudo hostnamectl set-hostname cm4-01
+```
+
+**5. Update `/etc/hosts`,** so `sudo` doesn't warn *"unable to resolve host cm4-01"*:
+
+```bash
+sudo nano /etc/hosts
+```
+
+Change the `127.0.1.1` line to your new name (add the line if it is missing):
+
+```
+127.0.0.1 localhost
+127.0.1.1 cm4-01
+```
+
+Save with `Ctrl+O`, `Enter`, then exit with `Ctrl+X`.
+
+**6. Stop cloud-init from changing the name back on the next boot:**
+
+```bash
+echo "preserve_hostname: true" | sudo tee /etc/cloud/cloud.cfg.d/99-preserve-hostname.cfg
+```
+
+**7. Reboot and check:**
+
+```bash
+sudo reboot
+# log in again, then:
+hostname          # -> cm4-01
+```
+
+While you are at the console, note the CM4's IP address. It saves searching for it in Part 3.2:
+
+```bash
+ip -br addr       # e.g. eth0  UP  192.168.137.57/24
+```
+
+> **Later changes over SSH:** the same steps (3–7) work in an SSH session too. If you
+> have already installed `avahi-daemon` (Part 4.2), also run
+> `sudo systemctl restart avahi-daemon` so that `<new-name>.local` resolves.
 
 ---
 
@@ -598,6 +672,8 @@ RViz and GUI tools that a headless CM4 can't use. Visualise from your laptop ins
 | Nothing happens at power-on, no activity LED | Check the 12 V supply; make sure the J2 jumper is **not** fitted; re-seat the CM4 |
 | CM4 doesn't boot from the SD card | Check it is a **Lite** model (part number ends in `000`). eMMC models ignore the SD slot |
 | `Permission denied` at the first SSH login | cloud-init hasn't finished. Wait 2–3 minutes and try again |
+| `sudo: unable to resolve host ...` | `/etc/hosts` still has the old name on the `127.0.1.1` line (Part 2.1, step 5) |
+| Hostname goes back to `ubuntu` after a reboot | Add `preserve_hostname: true` (Part 2.1, step 6) |
 | `ssh: Could not resolve hostname cm4-01.local` | Install `avahi-daemon` (Part 4.2) or use the IP address |
 | Can't find the CM4's IP | Use the GUI sharing method (it runs DHCP), then `arp -a`; or plug in HDMI + keyboard and run `ip -br addr` |
 | Lost SSH after `setup_network.sh` | Reconnect to `ETH_ADDRESS`. If that fails, put the SD card in your laptop, delete `/etc/netplan/01-cm4-network.yaml` on the `writable` partition and copy the backup from `/etc/netplan-backups/` |
@@ -615,6 +691,7 @@ RViz and GUI tools that a headless CM4 can't use. Visualise from your laptop ins
 
 - [ ] SD card flashed with Ubuntu Server 22.04 LTS (64-bit), with hostname, user, SSH and Wi-Fi set in Imager
 - [ ] CM4 Lite boots on the IO board from 12 V (J2 not fitted)
+- [ ] Unique hostname set: `hostname` prints e.g. `cm4-01`
 - [ ] Connected over SSH from your laptop (key-based login set up)
 - [ ] Internet shared from the laptop: `ping -c3 8.8.8.8` works on the CM4
 - [ ] Static IP on eth0 via `setup_network.sh` (e.g. `192.168.137.12`)
