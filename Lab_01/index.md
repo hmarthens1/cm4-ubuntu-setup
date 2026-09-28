@@ -600,7 +600,12 @@ ping -c3 8.8.8.8               # the internet answers?
 ssh ubuntu@192.168.137.12
 ```
 
-**To undo Method A:** `sudo rm /etc/netplan/99-eth0-static.yaml && sudo netplan apply`
+**To undo Method A:** delete both files, then apply:
+
+```bash
+sudo rm /etc/netplan/99-eth0-static.yaml /etc/cloud/cloud.cfg.d/99-disable-network-config.cfg
+sudo netplan apply
+```
 
 ---
 
